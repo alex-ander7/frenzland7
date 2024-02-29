@@ -30,6 +30,17 @@ from . import PatchedSubscriberExecutionContext, __version__
 from .core.languages import LANGUAGES as CORE_LANGUAGES
 from .core.schedules import initiated_promotion_webhook_schedule
 
+try:
+    from decouple import RepositoryEnv
+    file_path = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+    #print("{}/.env".format(file_path))
+    for k,v in RepositoryEnv("{}/.env".format(file_path)).data.items():
+        #print(k, v)
+        os.environ[k] = v
+except Exception as e:
+    # print(e)
+    pass
+
 django_stubs_ext.monkeypatch()
 
 
@@ -73,7 +84,7 @@ MANAGERS = ADMINS
 
 APPEND_SLASH = False
 
-_DEFAULT_CLIENT_HOSTS = "localhost,127.0.0.1"
+_DEFAULT_CLIENT_HOSTS = "localhost,127.0.0.1,"
 
 ALLOWED_CLIENT_HOSTS = os.environ.get("ALLOWED_CLIENT_HOSTS")
 if not ALLOWED_CLIENT_HOSTS:
@@ -227,13 +238,61 @@ JWT_MANAGER_PATH = os.environ.get(
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
 ]
+CSP_HEADER = {
+    'default-src': ["'self'"],
+    'script-src': ["'self'", 'https://cdn.jsdelivr.net'],
+    'style-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net/npm/@saleor/graphql-playground@3.0.0/dist/umd/index.css', 'https://www.gstatic.com'],
+    # Otras directivas CSP necesarias...
+}
+
+
+
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:9000",
+    "http://www.frenzland7.com",
+    "https://www.frenzland7.com",
+    "http://admin.frenzland7.com",
+    "https://admin.frenzland7.com",
+]
+# Permitir cookies en solicitudes CORS
+CORS_ALLOW_CREDENTIALS = True
+
+# Permitir todos los encabezados en solicitudes CORS
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+
+# Permitir todos los métodos en solicitudes CORS
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
     "storages",
+    'corsheaders',
     # Django modules
     "django.contrib.contenttypes",
     "django.contrib.sites",
@@ -433,10 +492,24 @@ TEST_RUNNER = "saleor.tests.runner.PytestTestRunner"
 
 PLAYGROUND_ENABLED = get_bool_from_env("PLAYGROUND_ENABLED", True)
 
-ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1"))
+ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,localhost:3000,localhost:9000,181.116.241.163,api.frenzland7.com,www.frenzland7.com,admin.frenzland7.com"))
 ALLOWED_GRAPHQL_ORIGINS: list[str] = get_list(
-    os.environ.get("ALLOWED_GRAPHQL_ORIGINS", "*")
+    os.environ.get("ALLOWED_GRAPHQL_ORIGINS", 
+        "http://localhost:3000,"
+        "http://localhost:3000,"
+        "http://127.0.0.1:9000,"
+        "http://181.116.241.163,"
+        "http://api.frenzland7.com,"
+        "http://www.frenzland7.com,"
+        "http://admin.frenzland7.com,"
+        "https://localhost,"
+        "https://127.0.0.1,"
+        "https://181.116.241.163,"
+        "https://api.frenzland7.com,"
+        "https://www.frenzland7.com,"
+        "https://admin.frenzland7.com")
 )
+
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
