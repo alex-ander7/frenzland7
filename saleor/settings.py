@@ -29,17 +29,7 @@ from sentry_sdk.integrations.logging import ignore_logger
 from . import PatchedSubscriberExecutionContext, __version__
 from .core.languages import LANGUAGES as CORE_LANGUAGES
 from .core.schedules import initiated_promotion_webhook_schedule
-
-try:
-    from decouple import RepositoryEnv
-    file_path = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-    #print("{}/.env".format(file_path))
-    for k,v in RepositoryEnv("{}/.env".format(file_path)).data.items():
-        #print(k, v)
-        os.environ[k] = v
-except Exception as e:
-    # print(e)
-    pass
+from .graphql.executor import patch_executor
 
 django_stubs_ext.monkeypatch()
 
@@ -84,7 +74,7 @@ MANAGERS = ADMINS
 
 APPEND_SLASH = False
 
-_DEFAULT_CLIENT_HOSTS = "localhost,127.0.0.1,"
+_DEFAULT_CLIENT_HOSTS = "localhost,127.0.0.1"
 
 ALLOWED_CLIENT_HOSTS = os.environ.get("ALLOWED_CLIENT_HOSTS")
 if not ALLOWED_CLIENT_HOSTS:
@@ -121,6 +111,7 @@ DATABASES = {
         # and we need to update docs.
         # default="postgres://saleor_read_only:saleor@localhost:5432/saleor",
         conn_max_age=DB_CONN_MAX_AGE,
+        test_options={"MIRROR": DATABASE_CONNECTION_DEFAULT_NAME},
     ),
 }
 
@@ -157,6 +148,18 @@ EMAIL_PORT: str = str(email_config.get("EMAIL_PORT", ""))
 EMAIL_BACKEND: str = email_config.get("EMAIL_BACKEND", "")
 EMAIL_USE_TLS: bool = email_config.get("EMAIL_USE_TLS", False)
 EMAIL_USE_SSL: bool = email_config.get("EMAIL_USE_SSL", False)
+
+# SMTP configuration for UserEmailPlugin can be achieved by setting USER_EMAIL_URL.
+# Providing that variable means that SMTP configuration for this plugin is not required.
+user_email_config = dj_email_url.parse(os.environ.get("USER_EMAIL_URL", ""))
+
+USER_EMAIL_HOST_USER: str = user_email_config.get("EMAIL_HOST_USER") or ""
+USER_EMAIL_HOST_PASSWORD: str = user_email_config.get("EMAIL_HOST_PASSWORD") or ""
+USER_EMAIL_HOST: str = user_email_config.get("EMAIL_HOST") or ""
+USER_EMAIL_PORT: str = str(user_email_config.get("EMAIL_PORT") or "")
+
+USER_EMAIL_USE_TLS: bool = user_email_config.get("EMAIL_USE_TLS", False)
+USER_EMAIL_USE_SSL: bool = user_email_config.get("EMAIL_USE_SSL", False)
 
 ENABLE_SSL: bool = get_bool_from_env("ENABLE_SSL", False)
 
@@ -238,61 +241,19 @@ JWT_MANAGER_PATH = os.environ.get(
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
 ]
-CSP_HEADER = {
-    'default-src': ["'self'"],
-    'script-src': ["'self'", 'https://cdn.jsdelivr.net'],
-    'style-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net/npm/@saleor/graphql-playground@3.0.0/dist/umd/index.css', 'https://www.gstatic.com'],
-    # Otras directivas CSP necesarias...
-}
 
-
-
-
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:9000",
-    "http://www.frenzland7.com",
-    "https://www.frenzland7.com",
-    "http://admin.frenzland7.com",
-    "https://admin.frenzland7.com",
-]
-# Permitir cookies en solicitudes CORS
-CORS_ALLOW_CREDENTIALS = True
-
-# Permitir todos los encabezados en solicitudes CORS
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
-
-
-# Permitir todos los métodos en solicitudes CORS
-CORS_ALLOW_METHODS = [
-    'DELETE',
-    'GET',
-    'OPTIONS',
-    'PATCH',
-    'POST',
-    'PUT',
-]
-
-
+ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
+    "ENABLE_RESTRICT_WRITER_MIDDLEWARE", False
+)
+if ENABLE_RESTRICT_WRITER_MIDDLEWARE:
+    MIDDLEWARE = ["saleor.core.db.connection.log_writer_usage_middleware"] + MIDDLEWARE
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
     "storages",
-    'corsheaders',
     # Django modules
     "django.contrib.contenttypes",
     "django.contrib.sites",
@@ -492,24 +453,10 @@ TEST_RUNNER = "saleor.tests.runner.PytestTestRunner"
 
 PLAYGROUND_ENABLED = get_bool_from_env("PLAYGROUND_ENABLED", True)
 
-ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,localhost:3000,localhost:9000,181.116.241.163,api.frenzland7.com,www.frenzland7.com,admin.frenzland7.com"))
+ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1"))
 ALLOWED_GRAPHQL_ORIGINS: list[str] = get_list(
-    os.environ.get("ALLOWED_GRAPHQL_ORIGINS", 
-        "http://localhost:3000,"
-        "http://localhost:3000,"
-        "http://127.0.0.1:9000,"
-        "http://181.116.241.163,"
-        "http://api.frenzland7.com,"
-        "http://www.frenzland7.com,"
-        "http://admin.frenzland7.com,"
-        "https://localhost,"
-        "https://127.0.0.1,"
-        "https://181.116.241.163,"
-        "https://api.frenzland7.com,"
-        "https://www.frenzland7.com,"
-        "https://admin.frenzland7.com")
+    os.environ.get("ALLOWED_GRAPHQL_ORIGINS", "*")
 )
-
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -610,14 +557,6 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", None)
-CELERY_TASK_ROUTES = {
-    "saleor.plugins.webhook.tasks.observability_reporter_task": {
-        "queue": "observability"
-    },
-    "saleor.plugins.webhook.tasks.observability_send_events": {
-        "queue": "observability"
-    },
-}
 
 # Expire orders task setting
 BEAT_EXPIRE_ORDERS_AFTER_TIMEDELTA = timedelta(
@@ -630,6 +569,11 @@ BEAT_UPDATE_SEARCH_SEC = parse(
     os.environ.get("BEAT_UPDATE_SEARCH_FREQUENCY", "20 seconds")
 )
 BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC = BEAT_UPDATE_SEARCH_SEC
+
+BEAT_PRICE_RECALCULATION_SCHEDULE = parse(
+    os.environ.get("BEAT_PRICE_RECALCULATION_SCHEDULE", "30 seconds")
+)
+BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC = BEAT_PRICE_RECALCULATION_SCHEDULE
 
 # Defines the Celery beat scheduler entries.
 #
@@ -700,6 +644,19 @@ CELERY_BEAT_SCHEDULE = {
         "task": "saleor.payment.tasks.transaction_release_funds_for_checkout_task",
         "schedule": timedelta(minutes=10),
     },
+    "recalculate-promotion-rules": {
+        "task": (
+            "saleor.product.tasks"
+            ".update_variant_relations_for_active_promotion_rules_task"
+        ),
+        "schedule": timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
+        "options": {"expires": BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC},
+    },
+    "recalculate-discounted-price-for-products": {
+        "task": "saleor.product.tasks.recalculate_discounted_price_for_products_task",
+        "schedule": timedelta(seconds=BEAT_PRICE_RECALCULATION_SCHEDULE),
+        "options": {"expires": BEAT_PRICE_RECALCULATION_SCHEDULE_EXPIRE_AFTER_SEC},
+    },
 }
 
 # The maximum wait time between each is_due() call on schedulers
@@ -709,6 +666,9 @@ CELERY_BEAT_MAX_LOOP_INTERVAL = 300  # 5 minutes
 
 EVENT_PAYLOAD_DELETE_PERIOD = timedelta(
     seconds=parse(os.environ.get("EVENT_PAYLOAD_DELETE_PERIOD", "14 days"))
+)
+EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT = timedelta(
+    seconds=parse(os.environ.get("EVENT_PAYLOAD_DELETE_TASK_TIME_LIMIT", "1 hour"))
 )
 # Time between marking app "to remove" and removing the app from the database.
 # App is not visible for the user after removing, but it still exists in the database.
@@ -740,7 +700,7 @@ OBSERVABILITY_BUFFER_TIMEOUT = timedelta(
 )
 if OBSERVABILITY_ACTIVE:
     CELERY_BEAT_SCHEDULE["observability-reporter"] = {
-        "task": "saleor.plugins.webhook.tasks.observability_reporter_task",
+        "task": "saleor.webhook.transport.asynchronous.transport.observability_reporter_task",  # noqa
         "schedule": OBSERVABILITY_REPORT_PERIOD,
         "options": {"expires": OBSERVABILITY_REPORT_PERIOD.total_seconds()},
     }
@@ -828,17 +788,6 @@ for entry_point in installed_plugins:
 
 PLUGINS = BUILTIN_PLUGINS + EXTERNAL_PLUGINS
 
-# Default timeout (sec) for establishing a connection when performing external requests.
-REQUESTS_CONN_EST_TIMEOUT = 2
-
-# Default timeout for external requests.
-COMMON_REQUESTS_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
-
-# Timeouts for webhook requests. Sync webhooks (eg. payment webhook) need more time
-# for getting response from the server.
-WEBHOOK_TIMEOUT = 10
-WEBHOOK_SYNC_TIMEOUT = COMMON_REQUESTS_TIMEOUT
-
 # When `True`, HTTP requests made from arbitrary URLs will be rejected (e.g., webhooks).
 # if they try to access private IP address ranges, and loopback ranges (unless
 # `HTTP_IP_FILTER_ALLOW_LOOPBACK_IPS=False`).
@@ -862,7 +811,8 @@ RESERVE_DURATION = 45
 #
 # If running locally, set:
 #   JAEGER_AGENT_HOST=localhost
-if "JAEGER_AGENT_HOST" in os.environ:
+JAEGER_HOST = os.environ.get("JAEGER_AGENT_HOST")
+if JAEGER_HOST:
     jaeger_client.Config(
         config={
             "sampler": {"type": "const", "param": 1},
@@ -870,7 +820,7 @@ if "JAEGER_AGENT_HOST" in os.environ:
                 "reporting_port": os.environ.get(
                     "JAEGER_AGENT_PORT", jaeger_client.config.DEFAULT_REPORTING_PORT
                 ),
-                "reporting_host": os.environ.get("JAEGER_AGENT_HOST"),
+                "reporting_host": JAEGER_HOST,
             },
             "logging": get_bool_from_env("JAEGER_LOGGING", False),
         },
@@ -934,6 +884,8 @@ PRODUCT_MAX_INDEXED_VARIANTS = 1000
 
 executor.SubscriberExecutionContext = PatchedSubscriberExecutionContext  # type: ignore
 
+patch_executor()
+
 # Optional queue names for Celery tasks.
 # Set None to route to the default queue, or a string value to use a separate one
 #
@@ -943,6 +895,11 @@ UPDATE_SEARCH_VECTOR_INDEX_QUEUE_NAME = os.environ.get(
 )
 # Queue name for "async webhook" events
 WEBHOOK_CELERY_QUEUE_NAME = os.environ.get("WEBHOOK_CELERY_QUEUE_NAME", None)
+
+# Queue name for execution of collection product_updated events
+COLLECTION_PRODUCT_UPDATED_QUEUE_NAME = os.environ.get(
+    "COLLECTION_PRODUCT_UPDATED_QUEUE_NAME", None
+)
 
 # Lock time for request password reset mutation per user (seconds)
 RESET_PASSWORD_LOCK_TIME = parse(
@@ -958,3 +915,37 @@ CONFIRMATION_EMAIL_LOCK_TIME = parse(
 OAUTH_UPDATE_LAST_LOGIN_THRESHOLD = parse(
     os.environ.get("OAUTH_UPDATE_LAST_LOGIN_THRESHOLD", "15 minutes")
 )
+
+# Max lock time for checkout processing.
+# It prevents locking checkout when unhandled issue appears.
+CHECKOUT_COMPLETION_LOCK_TIME = parse(
+    os.environ.get("CHECKOUT_COMPLETION_LOCK_TIME", "3 minutes")
+)
+
+# Default timeout (sec) for establishing a connection when performing external requests.
+REQUESTS_CONN_EST_TIMEOUT = 2
+
+# Default timeout for external requests.
+COMMON_REQUESTS_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
+
+WEBHOOK_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
+WEBHOOK_SYNC_TIMEOUT = (REQUESTS_CONN_EST_TIMEOUT, 18)
+
+# The max number of rules with order_predicate defined
+ORDER_RULES_LIMIT = os.environ.get("ORDER_RULES_LIMIT", 100)
+
+# The max number of gits assigned to promotion rule
+GIFTS_LIMIT_PER_RULE = os.environ.get("GIFTS_LIMIT_PER_RULE", 500)
+
+# Whether to enable the comparison of pre-save and post-save webhook payloads in
+# mutations, in order to limit sending webhooks where the payload has not changed as
+# a result of the mutation. Note: this works only for subscriptions webhooks; legacy
+# payloads are not supported.
+ENABLE_LIMITING_WEBHOOKS_FOR_IDENTICAL_PAYLOADS = get_bool_from_env(
+    "ENABLE_LIMITING_WEBHOOKS_FOR_IDENTICAL_PAYLOADS", False
+)
+
+
+# Transaction items limit for PaymentGatewayInitialize / TransactionInitialize.
+# That setting limits the allowed number of transaction items for single entity.
+TRANSACTION_ITEMS_LIMIT = 100
