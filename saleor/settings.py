@@ -31,6 +31,17 @@ from .core.languages import LANGUAGES as CORE_LANGUAGES
 from .core.schedules import initiated_promotion_webhook_schedule
 from .graphql.executor import patch_executor
 
+try:
+    from decouple import RepositoryEnv
+    file_path = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+    #print("{}/.env".format(file_path))
+    for k,v in RepositoryEnv("{}/.env".format(file_path)).data.items():
+        #print(k, v)
+        os.environ[k] = v
+except Exception as e:
+    # print(e)
+    pass
+
 django_stubs_ext.monkeypatch()
 
 
@@ -240,9 +251,43 @@ JWT_MANAGER_PATH = os.environ.get(
 )
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
+]
+CORS_ALLOWED_ORIGINS = [
+    "https://admin.frenzland7.com",
+    "https://www.frenzland7.com",
+    "http://localhost:9000",
+    "http://127.0.0.1:9000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+ ]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'authorization-bearer',  # Añade este encabezado si es necesario
+]
+
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
 ]
 
 ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
@@ -253,6 +298,7 @@ if ENABLE_RESTRICT_WRITER_MIDDLEWARE:
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
+    'corsheaders',
     "storages",
     # Django modules
     "django.contrib.contenttypes",
@@ -453,7 +499,7 @@ TEST_RUNNER = "saleor.tests.runner.PytestTestRunner"
 
 PLAYGROUND_ENABLED = get_bool_from_env("PLAYGROUND_ENABLED", True)
 
-ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1"))
+ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,api.frenzland7.com"))
 ALLOWED_GRAPHQL_ORIGINS: list[str] = get_list(
     os.environ.get("ALLOWED_GRAPHQL_ORIGINS", "*")
 )
